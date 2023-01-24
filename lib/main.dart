@@ -1,7 +1,133 @@
+import 'dart:async';
+import 'dart:io';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
-void main() {
+import 'dart:developer' as dev;
+
+import 'firebase_options.dart';
+
+late FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin;
+late AndroidNotificationChannel channel;
+bool isFlutterLocalNotificationsInitialized = false;
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  if(Platform.isAndroid){
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+    await setupFlutterNotifications();
+    await getTokenFCM();
+    listenMessageOnOpenApp();
+  }
+
   runApp(const MyApp());
+}
+
+Future<void> getTokenFCM() async {
+  String? token = await FirebaseMessaging.instance.getToken();
+  dev.log(token!);
+}
+
+Future<void> setupFlutterNotifications() async {
+  if (isFlutterLocalNotificationsInitialized) {
+    return;
+  }
+  flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+  if (Platform.isAndroid) {
+    channel = const AndroidNotificationChannel(
+      'high_importance_channel', // id
+      'High Importance Notifications', // title
+      description:
+      'This channel is used for important notifications.', // description
+      importance: Importance.high,
+    );
+    await flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(channel);
+  }
+
+  const AndroidInitializationSettings initAndroid =
+  AndroidInitializationSettings('@mipmap/ic_launcher');
+
+  const DarwinInitializationSettings intIOS = DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true);
+
+  const InitializationSettings initSetting =
+  InitializationSettings(android: initAndroid, iOS: intIOS);
+  await flutterLocalNotificationsPlugin.initialize(initSetting);
+
+  isFlutterLocalNotificationsInitialized = true;
+}
+
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  // If you're going to use other Firebase services in the background, such as Firestore,
+  // make sure you call `initializeApp` before using other Firebase services.
+  await Firebase.initializeApp();
+  print("Handling a background message: ${message.messageId}");
+
+  RemoteNotification? notification = message.notification;
+  if (notification != null) {
+    showNotification(
+        id: notification.hashCode,
+        title: notification.title!,
+        des: notification.body);
+  }
+  // var random = Random();
+  // int id = random.nextInt(100000);
+  // showNotification(id: id, title: 'ทดสอบหัวข้อ', des: 'แจ้งเตือนทั่วไป');
+}
+
+showNotification(
+    {int id = 0, String title = '', String? des, RemoteMessage? msg}) async {
+  AndroidNotification? android = msg?.notification?.android;
+
+  AndroidNotificationDetails detailAndroid = AndroidNotificationDetails(
+      title, 'notification', // category type notification in android
+      channelDescription: des,
+      importance: Importance.max,
+      priority: Priority.max,
+      playSound: true,
+      ticker: 'ticker');
+
+  NotificationDetails details =
+  NotificationDetails(android: detailAndroid);
+
+  flutterLocalNotificationsPlugin.show(id, title, des, details);
+}
+
+Future<void> listenMessageOnOpenApp() async {
+  await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+    alert: true, // Required to display a heads up notification
+    badge: true,
+    sound: true,
+  );
+
+  try {
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
+      RemoteNotification? notification = message.notification;
+      print('listenMessageOnOpenApp title=====>${notification!.title}');
+
+      if (notification != null && Platform.isAndroid) {
+        print('FirebaseMessaging.onMessage.listen');
+        showNotification(
+            id: notification.hashCode,
+            title: notification.title!,
+            des: notification.body);
+      }
+    });
+  } catch (e) {
+    print('error:${e}');
+  }
 }
 
 class MyApp extends StatelessWidget {
