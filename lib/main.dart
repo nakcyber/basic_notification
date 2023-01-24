@@ -47,7 +47,7 @@ Future<void> main() async {
 
 Future<void> getTokenFCM() async {
   String? token = await FirebaseMessaging.instance.getToken();
-  dev.log(token!);
+  print("Fcm token: ${token}");
 }
 
 Future<void> setupFlutterNotifications() async {
@@ -97,9 +97,6 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         title: notification.title!,
         des: notification.body);
   }
-  // var random = Random();
-  // int id = random.nextInt(100000);
-  // showNotification(id: id, title: 'ทดสอบหัวข้อ', des: 'แจ้งเตือนทั่วไป');
 }
 
 showNotification(
