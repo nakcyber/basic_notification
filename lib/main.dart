@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_apns/flutter_apns.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import 'dart:developer' as dev;
@@ -26,6 +27,20 @@ Future<void> main() async {
     await getTokenFCM();
     listenMessageOnOpenApp();
   }
+
+  if(Platform.isIOS){
+    final connector = createPushConnector();
+    connector.configure(
+      onLaunch:  (onLaunch) async { print("onLaunch ==> ${onLaunch.data.toString()}"); return await null; },
+      onResume: (onResume) async { print("onResume ==> ${onResume.data.toString()}");},
+      onMessage:  (onMessage) async {print("onMessage ==> ${onMessage.data.toString()}"); return await null;},
+    );
+    connector.token.addListener(() {
+      print('Token IOS: ${connector.token.value}');
+    });
+    connector.requestNotificationPermissions();
+  }
+
 
   runApp(const MyApp());
 }
@@ -150,7 +165,7 @@ class MyApp extends StatelessWidget {
         // is not restarted.
         primarySwatch: Colors.blue,
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const MyHomePage(title: 'Flutter Notification'),
     );
   }
 }
