@@ -1,5 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
+import 'package:http/http.dart' as http;
+
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
@@ -17,7 +21,7 @@ bool isFlutterLocalNotificationsInitialized = false;
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  if(Platform.isAndroid){
+  if (Platform.isAndroid) {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
@@ -28,19 +32,26 @@ Future<void> main() async {
     listenMessageOnOpenApp();
   }
 
-  if(Platform.isIOS){
+  if (Platform.isIOS) {
     final connector = createPushConnector();
     connector.configure(
-      onLaunch:  (onLaunch) async { print("onLaunch ==> ${onLaunch.data.toString()}"); return await null; },
-      onResume: (onResume) async { print("onResume ==> ${onResume.data.toString()}");},
-      onMessage:  (onMessage) async {print("onMessage ==> ${onMessage.data.toString()}"); return await null;},
+      onLaunch: (onLaunch) async {
+        print("onLaunch ==> ${onLaunch.data.toString()}");
+        return await null;
+      },
+      onResume: (onResume) async {
+        print("onResume ==> ${onResume.data.toString()}");
+      },
+      onMessage: (onMessage) async {
+        print("onMessage ==> ${onMessage.data.toString()}");
+        return await null;
+      },
     );
     connector.token.addListener(() {
       print('Token IOS: ${connector.token.value}');
     });
     connector.requestNotificationPermissions();
   }
-
 
   runApp(const MyApp());
 }
@@ -60,17 +71,17 @@ Future<void> setupFlutterNotifications() async {
       'high_importance_channel', // id
       'High Importance Notifications', // title
       description:
-      'This channel is used for important notifications.', // description
+          'This channel is used for important notifications.', // description
       importance: Importance.high,
     );
     await flutterLocalNotificationsPlugin
         .resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>()
+            AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(channel);
   }
 
   const AndroidInitializationSettings initAndroid =
-  AndroidInitializationSettings('@mipmap/ic_launcher');
+      AndroidInitializationSettings('@mipmap/ic_launcher');
 
   const DarwinInitializationSettings intIOS = DarwinInitializationSettings(
       requestAlertPermission: true,
@@ -78,7 +89,7 @@ Future<void> setupFlutterNotifications() async {
       requestSoundPermission: true);
 
   const InitializationSettings initSetting =
-  InitializationSettings(android: initAndroid, iOS: intIOS);
+      InitializationSettings(android: initAndroid, iOS: intIOS);
   await flutterLocalNotificationsPlugin.initialize(initSetting);
 
   isFlutterLocalNotificationsInitialized = true;
@@ -111,8 +122,7 @@ showNotification(
       playSound: true,
       ticker: 'ticker');
 
-  NotificationDetails details =
-  NotificationDetails(android: detailAndroid);
+  NotificationDetails details = NotificationDetails(android: detailAndroid);
 
   flutterLocalNotificationsPlugin.show(id, title, des, details);
 }
@@ -126,15 +136,49 @@ Future<void> listenMessageOnOpenApp() async {
 
   try {
     FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
-      RemoteNotification? notification = message.notification;
-      print('listenMessageOnOpenApp title=====>${notification!.title}');
+      RemoteNotification? notification = message!.notification;
+
 
       if (notification != null && Platform.isAndroid) {
-        print('FirebaseMessaging.onMessage.listen');
-        showNotification(
-            id: notification.hashCode,
-            title: notification.title!,
-            des: notification.body);
+        String urlPath = message!.notification!.android!.imageUrl ?? '';
+        AndroidNotificationDetails details = AndroidNotificationDetails(
+            channel.id, channel.name,
+            channelDescription: channel.description,
+            importance: Importance.max,
+            priority: Priority.max,
+            playSound: true,
+            ticker: 'ticker'
+        );
+
+
+        if (urlPath.isNotEmpty) {
+          final http.Response response = await http.get(Uri.parse(urlPath));
+          BigPictureStyleInformation bigPictureStyleInformation =
+          BigPictureStyleInformation(
+            ByteArrayAndroidBitmap.fromBase64String(
+                base64Encode(response.bodyBytes)),
+            largeIcon: ByteArrayAndroidBitmap.fromBase64String(
+                base64Encode(response.bodyBytes)),
+          );
+
+          details = AndroidNotificationDetails(channel.id, channel.name,
+              channelDescription: channel.description,
+              styleInformation: bigPictureStyleInformation,
+              importance: Importance.max,
+              priority: Priority.max,
+              playSound: true,
+              ticker: 'ticker',
+              );
+        }
+
+        flutterLocalNotificationsPlugin.show(
+          Random().nextInt(1000),
+          message!.notification!.title,
+          message!.notification!.body,
+          NotificationDetails(
+            android: details,
+          ),
+        );
       }
     });
   } catch (e) {
