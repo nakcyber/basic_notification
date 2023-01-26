@@ -1,14 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 import 'package:http/http.dart' as http;
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_apns/flutter_apns.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'dart:developer' as dev;
 
@@ -21,37 +20,14 @@ bool isFlutterLocalNotificationsInitialized = false;
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  if (Platform.isAndroid) {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
 
-    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-    await setupFlutterNotifications();
-    await getTokenFCM();
-    listenMessageOnOpenApp();
-  }
-
-  if (Platform.isIOS) {
-    final connector = createPushConnector();
-    connector.configure(
-      onLaunch: (onLaunch) async {
-        print("onLaunch ==> ${onLaunch.data.toString()}");
-        return await null;
-      },
-      onResume: (onResume) async {
-        print("onResume ==> ${onResume.data.toString()}");
-      },
-      onMessage: (onMessage) async {
-        print("onMessage ==> ${onMessage.data.toString()}");
-        return await null;
-      },
-    );
-    connector.token.addListener(() {
-      print('Token IOS: ${connector.token.value}');
-    });
-    connector.requestNotificationPermissions();
-  }
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  await setupFlutterNotifications();
+  await getTokenFCM();
+  listenMessageOnOpenApp();
 
   runApp(const MyApp());
 }
@@ -80,6 +56,27 @@ Future<void> setupFlutterNotifications() async {
         ?.createNotificationChannel(channel);
   }
 
+  if (Platform.isIOS) {
+    /// Update the iOS foreground notification presentation options to allow
+    /// heads up notifications.
+    await FirebaseMessaging.instance
+        .setForegroundNotificationPresentationOptions(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+
+    final bool? result = await flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<
+            IOSFlutterLocalNotificationsPlugin>()
+        ?.requestPermissions(
+          alert: true,
+          badge: true,
+          sound: true,
+        );
+    print('init requestPermissions IOS:${result}');
+  }
+
   const AndroidInitializationSettings initAndroid =
       AndroidInitializationSettings('@mipmap/ic_launcher');
 
@@ -92,6 +89,29 @@ Future<void> setupFlutterNotifications() async {
       InitializationSettings(android: initAndroid, iOS: intIOS);
   await flutterLocalNotificationsPlugin.initialize(initSetting);
 
+  if (Platform.isIOS) {
+    FirebaseMessaging messaging = FirebaseMessaging.instance;
+    // push notification on IOS
+    NotificationSettings settings = await messaging.requestPermission(
+      alert: true,
+      announcement: true,
+      badge: true,
+      carPlay: true,
+      criticalAlert: true,
+      provisional: false,
+      sound: true,
+    );
+
+    if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+      print('User granted permission');
+    } else if (settings.authorizationStatus ==
+        AuthorizationStatus.provisional) {
+      print('User granted provisional permission');
+    } else {
+      print('User declined or has not accepted permission');
+    }
+  }
+
   isFlutterLocalNotificationsInitialized = true;
 }
 
@@ -103,28 +123,80 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
   RemoteNotification? notification = message.notification;
   if (notification != null) {
-    showNotification(
-        id: notification.hashCode,
-        title: notification.title!,
-        des: notification.body);
+    showNotification(msg: message);
   }
 }
 
-showNotification(
-    {int id = 0, String title = '', String? des, RemoteMessage? msg}) async {
-  AndroidNotification? android = msg?.notification?.android;
+showNotification({RemoteMessage? msg}) async {
+  RemoteNotification? notification = msg!.notification;
 
-  AndroidNotificationDetails detailAndroid = AndroidNotificationDetails(
-      title, 'notification', // category type notification in android
-      channelDescription: des,
-      importance: Importance.max,
-      priority: Priority.max,
-      playSound: true,
-      ticker: 'ticker');
+  if (notification != null && Platform.isAndroid) {
+    String urlPath = msg!.notification!.android!.imageUrl ?? '';
+    AndroidNotificationDetails details = AndroidNotificationDetails(
+        channel.id, channel.name,
+        channelDescription: channel.description,
+        importance: Importance.max,
+        priority: Priority.max,
+        playSound: true,
+        ticker: 'ticker');
 
-  NotificationDetails details = NotificationDetails(android: detailAndroid);
+    if (urlPath.isNotEmpty) {
+      final http.Response response = await http.get(Uri.parse(urlPath));
+      BigPictureStyleInformation bigPictureStyleInformation =
+          BigPictureStyleInformation(
+        ByteArrayAndroidBitmap.fromBase64String(
+            base64Encode(response.bodyBytes)),
+        largeIcon: ByteArrayAndroidBitmap.fromBase64String(
+            base64Encode(response.bodyBytes)),
+      );
 
-  flutterLocalNotificationsPlugin.show(id, title, des, details);
+      details = AndroidNotificationDetails(
+        channel.id,
+        channel.name,
+        channelDescription: channel.description,
+        styleInformation: bigPictureStyleInformation,
+        importance: Importance.max,
+        priority: Priority.max,
+        playSound: true,
+        ticker: 'ticker',
+      );
+    }
+
+    flutterLocalNotificationsPlugin.show(
+      msg!.hashCode,
+      msg!.notification!.title,
+      msg!.notification!.body,
+      NotificationDetails(
+        android: details,
+      ),
+    );
+  }
+
+  if (notification != null && Platform.isIOS) {
+    String urlPath = msg!.notification!.apple!.imageUrl ?? '';
+    final picturePath = await downloadAndSaveFile(urlPath, 'img.jpg');
+    final details = DarwinNotificationDetails(
+      attachments: [DarwinNotificationAttachment(picturePath)],
+    );
+
+    flutterLocalNotificationsPlugin.show(
+      msg!.hashCode,
+      msg!.notification!.title,
+      msg!.notification!.body,
+      NotificationDetails(
+        iOS: details,
+      ),
+    );
+  }
+}
+
+Future<String> downloadAndSaveFile(String url, String fileName) async {
+  var directory = await getApplicationDocumentsDirectory();
+  var filePath = '${directory.path}/$fileName';
+  var response = await http.get(Uri.parse(url));
+  var file = File(filePath);
+  await file.writeAsBytes(response.bodyBytes);
+  return filePath;
 }
 
 Future<void> listenMessageOnOpenApp() async {
@@ -136,49 +208,9 @@ Future<void> listenMessageOnOpenApp() async {
 
   try {
     FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
-      RemoteNotification? notification = message!.notification;
-
-
-      if (notification != null && Platform.isAndroid) {
-        String urlPath = message!.notification!.android!.imageUrl ?? '';
-        AndroidNotificationDetails details = AndroidNotificationDetails(
-            channel.id, channel.name,
-            channelDescription: channel.description,
-            importance: Importance.max,
-            priority: Priority.max,
-            playSound: true,
-            ticker: 'ticker'
-        );
-
-
-        if (urlPath.isNotEmpty) {
-          final http.Response response = await http.get(Uri.parse(urlPath));
-          BigPictureStyleInformation bigPictureStyleInformation =
-          BigPictureStyleInformation(
-            ByteArrayAndroidBitmap.fromBase64String(
-                base64Encode(response.bodyBytes)),
-            largeIcon: ByteArrayAndroidBitmap.fromBase64String(
-                base64Encode(response.bodyBytes)),
-          );
-
-          details = AndroidNotificationDetails(channel.id, channel.name,
-              channelDescription: channel.description,
-              styleInformation: bigPictureStyleInformation,
-              importance: Importance.max,
-              priority: Priority.max,
-              playSound: true,
-              ticker: 'ticker',
-              );
-        }
-
-        flutterLocalNotificationsPlugin.show(
-          Random().nextInt(1000),
-          message!.notification!.title,
-          message!.notification!.body,
-          NotificationDetails(
-            android: details,
-          ),
-        );
+      RemoteNotification? notification = message.notification;
+      if (notification != null) {
+        showNotification(msg: message);
       }
     });
   } catch (e) {
